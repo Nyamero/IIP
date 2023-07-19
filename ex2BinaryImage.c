@@ -11,8 +11,8 @@
 #define COL 3
 
 //二値画像生成のブロックサイズ定義
-#define FSIZE 7   //フィルタサイズ
-#define BSIZE 35   //ブロックサイズ
+#define FSIZE 15  //フィルタサイズ
+#define BSIZE 15   //ブロックサイズ
 
 
 /*=====================*
@@ -49,6 +49,8 @@ unsigned char header[54];
 unsigned char imgin[3][512][512];
 //画像データ格納配列2
 unsigned char imgprc[3][512][512];
+//画像データ格納配列3
+unsigned char imgprc2[20][3][512][512];
 //画像データコピー格納配列
 unsigned char imgout[3][512][512];
 
@@ -206,21 +208,20 @@ void processing(void){
     double filter_gaussian[FSIZE][FSIZE];
 
     double pi = 4.0 * atan(1.0);    //π=の3.14...の近似
-    double sigma = 1.7; //σの定義
+    double sigma = 3.0; //σの定義
 
     double calc_tmp = (1 / (2 * pi * pow(sigma, 2)));
 
-    printf("calc_tmp = %f\n", calc_tmp);
-
-    /*ガウシアンフィルタ生成(BSIZE*BSIZE)*/
+    /*ガウシアンフィルタ生成(FSIZE*FSIZE)*/
     for(int i = 0; i < FSIZE; i++) {
-        printf("a\n");
         
         for(int j = 0; j < FSIZE; j++) {
             filter_gaussian[i][j] = calc_tmp * exp(-1 * (pow(i - (int)(FSIZE / 2), 2) + pow(j - (int)(FSIZE / 2), 2)) / (2 * pow(sigma, 2)));
         }
     }
 
+    /*
+    //ガウシアンフィルタ適用作業中
     for(int i = 0; i < height; i++){
         for(int j = 0; j < width; j++){
 
@@ -243,20 +244,35 @@ void processing(void){
             
         }
     }
+    */
+    
 
     //差分をとる
     /*
     for(int i = 0; i < height; i++){
         for(int j = 0; j < width; j++){
-            imgout[2][j][i] = imgprc[2][j][i] - imgin[2][j][i];
-            imgout[1][j][i] = imgprc[1][j][i];
-            imgout[0][j][i] = imgprc[0][j][i];
+            imgprc[2][j][i] = imgprc[2][j][i] - imgin[2][j][i];
+            imgprc[1][j][i] = imgin[1][j][i];
+            imgprc[0][j][i] = imgin[0][j][i];
         }
     }
     */
+    
+
+    //imgprcに代入(なにもしないとき)
+    
+    for(int i = 0; i < height; i++) {
+        for(int j = 0; j < width; j++) {
+            for(int k = 0; k < 3; k++) {
+                imgprc[k][j][i] = imgin[k][j][i];
+            }
+        }
+    }
 
     //二値
     double threshold;
+
+    
     
     //全画素分回す
     for(int i = 0; i < height; i++){    //縦ループ
@@ -270,29 +286,163 @@ void processing(void){
                 for(int l = 0; l < BSIZE; l++) { //横ループ
                     //領域外(プラス画像にオーバー)であるとき[鏡像変換]
                     if(j - (int)(BSIZE / 2) + l >= width || i - (int)(BSIZE / 2) + k >= height) {
-                        threshold += imgprc[2][abs(j - (int)(BSIZE / 2) + l) - (abs(j - (int)(BSIZE / 2) + l) - width)][abs(i - (int)(BSIZE / 2) + k) - (abs(i - (int)(BSIZE / 2) + k) - height)];
+                        threshold += imgprc[2][abs(j - (int)(BSIZE / 2) + l) - (abs(j - (int)(BSIZE / 2) + l) - width)][abs(i - (int)(BSIZE / 2) + k) - (abs(i - (int)(BSIZE / 2) + k) - height)]* filter_gaussian[l][k];
                     } else {    //領域内 もしくは 領域外(マイナス方向にオーバー)であるとき[鏡像変換]
-                        threshold += imgprc[2][j - (int)(BSIZE / 2) + l][i - (int)(BSIZE / 2) + k];
+                        threshold += imgprc[2][j - (int)(BSIZE / 2) + l][i - (int)(BSIZE / 2) + k]* filter_gaussian[l][k];
                     }
                 }
             }
+            
             //平均をとる
-            threshold /= pow(BSIZE, 2);
+            //正規分布の重み付きである場合はそもそも割る数が含まれているためこの作業はなし
+            //threshold /= pow(BSIZE, 2);
 
-            if(j == 5) printf("th: %f, img: %d\n", threshold, imgprc[2][j][i]);
-
-            if(threshold < imgin[2][j][i]) {   //平均が元より小さいとき(<): 白
-                imgout[2][j][i] = 235;
-                imgout[1][j][i] = 128;
-                imgout[0][j][i] = 128;
+            //二値化
+            if(threshold < imgprc[2][j][i]) {   //平均が元より小さいとき(<): 白
+                imgprc2[0][2][j][i] = 235;
+                imgprc2[0][1][j][i] = 128;
+                imgprc2[0][0][j][i] = 128;
             } else {                           //平均がもとより大きいとき(<): 黒
-                imgout[2][j][i] = 16;
-                imgout[1][j][i] = 128;
-                imgout[0][j][i] = 128;
+                imgprc2[0][2][j][i] = 16;
+                imgprc2[0][1][j][i] = 128;
+                imgprc2[0][0][j][i] = 128;
             }
         }
     }
 
+    int times;  //オープニングの回数指定
+    int mode;   //近傍モード指定
+    int termination_status; //2重以上のループ脱出status
+
+    printf("オープニングの回数指定: ");
+    scanf("%d", &times);
+    printf("近傍指定(1->4, 2->8): ");
+    scanf("%d", &mode);
+
+
+    //オープニング処理
+    //--収縮--
+    /* 例: 元の二値画像はimgprc2[0]に入っている.
+     * 格納はimtprc2[1]から...
+     * 例を挙げると: times = 10の時(10回ずつの時)
+     * 収縮結果の最終格納先はimgprc2[10]である.
+     */
+    for(int num = 1; num <= times; num++) {  //回数ループ
+    //最も端の画素は今回は考えない.
+        for(int i = 1; i < height - 1; i++) {   //たて
+            for(int j = 1; j < width - 1; j++) {    //よこ
+                if(mode == 1) { //4近傍
+                    //1つ前の結果を参照して処理:4近傍
+                    //黒画素の4近傍を探索して1つでも白だったら白
+                    if(imgprc2[num - 1][2][j][i] <= 16) {
+                        if(imgprc2[num - 1][2][j+1][i] >= 235 || imgprc2[num - 1][2][j-1][i] >= 235 || imgprc2[num - 1][2][j][i+1] >= 235 || imgprc2[num - 1][2][j][i-1] >= 235) {
+                            imgprc2[num][2][j][i] = 235;
+                            imgprc2[num][1][j][i] = 128;
+                            imgprc2[num][0][j][i] = 128;
+                            //printf("いいね！");
+                        } else {
+                        imgprc2[num][2][j][i] = imgprc2[num - 1][2][j][i];
+                        imgprc2[num][1][j][i] = imgprc2[num - 1][1][j][i];
+                        imgprc2[num][0][j][i] = imgprc2[num - 1][0][j][i];
+                        }
+                    } else {
+                        imgprc2[num][2][j][i] = imgprc2[num - 1][2][j][i];
+                        imgprc2[num][1][j][i] = imgprc2[num - 1][1][j][i];
+                        imgprc2[num][0][j][i] = imgprc2[num - 1][0][j][i];
+                    }
+                } else if(mode == 2) {  //8近傍
+                    termination_status = 0;
+                    for(int k = -1; k <= 1; k++){   //縦
+                        for(int l = -1; l <= 1; l++) {  //横
+                            if(l == 0 && k == 0) {
+                                //なにもしない
+                            } else if(imgprc2[num - 1][2][j + l][i + k] >= 235 && imgprc2[num - 1][2][j][i] <= 16) {
+                                //黒画素の8近傍を探索して1つでも白だったら白にしてループを脱出
+                                imgprc2[num][2][j][i] = 235;
+                                imgprc2[num][1][j][i] = 128;
+                                imgprc2[num][0][j][i] = 128;
+                                termination_status = 1;
+                                break;
+                            } else {
+                                imgprc2[num][2][j][i] = imgprc2[num - 1][2][j][i];
+                                imgprc2[num][1][j][i] = imgprc2[num - 1][1][j][i];
+                                imgprc2[num][0][j][i] = imgprc2[num - 1][0][j][i];
+                            }
+                        }
+                        if(termination_status == 1) {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    //--膨張--
+    /* 例: 元の二値画像はimgprc2[0]に入っている.
+     * 例を挙げると: times = 10の時(10回ずつの時)
+     * imgprc2[10]を参照してimgprc2[9]に格納する.
+     * imgprc2[num + 1]を参照して降順で格納する.
+     * 即ちnumのループはtimes - 1(10 - 1 = 9)から0までとなる。
+     * 膨張結果の最終格納先はimgprc2[0]である.
+     */
+    for(int num = times - 1; num >= 0; num--) { //回数ループ
+        //最も端の画素は今回は考えない.
+        for(int i = 1; i < height - 1; i++) {   //たて
+            for(int j = 1; j < width - 1; j++) {    //よこ
+                if(mode == 1){
+                    //1つ前の結果を参照して処理:4近傍
+                    //白画素の4近傍を探索して1つでも黒だったら黒
+                    if(imgprc2[num + 1][2][j][i] >= 235) {
+                        if(imgprc2[num + 1][2][j+1][i] <= 16 || imgprc2[num + 1][2][j-1][i] <= 16 || imgprc2[num + 1][2][1][i+1] <= 16 || imgprc2[num + 1][2][j][i-1] <= 16) {
+                            imgprc2[num][2][j][i] = 16;
+                            imgprc2[num][1][j][i] = 128;
+                            imgprc2[num][0][j][i] = 128;
+                        } else {
+                        imgprc2[num][2][j][i] = imgprc2[num + 1][2][j][i];
+                        imgprc2[num][1][j][i] = imgprc2[num + 1][1][j][i];
+                        imgprc2[num][0][j][i] = imgprc2[num + 1][0][j][i];
+                        }
+                    } else {
+                        imgprc2[num][2][j][i] = imgprc2[num + 1][2][j][i];
+                        imgprc2[num][1][j][i] = imgprc2[num + 1][1][j][i];
+                        imgprc2[num][0][j][i] = imgprc2[num + 1][0][j][i];
+                    }
+                } else if(mode == 2) {  //8近傍
+                    termination_status = 0;
+                    for(int k = -1; k <= 1; k++){   //縦
+                        for(int l = -1; l <= 1; l++) {  //横
+                            if(l == 0 && k == 0) {
+                                //なにもしない
+                            } else if(imgprc2[num + 1][2][j + l][i + k] <= 16 && imgprc2[num - 1][2][j][i] == 235) {
+                                //白画素の8近傍を探索して1つでも黒だったら黒にしてループを脱出
+                                imgprc2[num][2][j][i] = 16;
+                                imgprc2[num][1][j][i] = 128;
+                                imgprc2[num][0][j][i] = 128;
+                                termination_status = 1;
+                                break;
+                            } else {
+                                imgprc2[num][2][j][i] = imgprc2[num + 1][2][j][i];
+                                imgprc2[num][1][j][i] = imgprc2[num + 1][1][j][i];
+                                imgprc2[num][0][j][i] = imgprc2[num + 1][0][j][i];
+                            }
+                        }
+                        if(termination_status == 1) {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    //最終オープニング結果prc2[0]からimgoutへ格納.
+    for(int i = 0; i < height; i++) {
+        for(int j = 0; j < width; j++) {
+            for(int k = 0; k < 3; k++) {
+                imgout[k][j][i] = imgprc2[0][k][j][i];
+            }
+        }
+    }
 
 }
 
